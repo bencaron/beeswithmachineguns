@@ -71,7 +71,7 @@ commands:
                         action='store', dest='type', type='string', default='t1.micro',
                         help="The instance-type to use for each server (default: t1.micro).")
     up_group.add_option('-l', '--login',  metavar="LOGIN",  nargs=1,
-                        action='store', dest='login', type='string', default='newsapps',
+                        action='store', dest='login', type='string', default='ubuntu',
                         help="The ssh username name to use to connect to the new servers (default: newsapps).")
     up_group.add_option('-v', '--subnet',  metavar="SUBNET",  nargs=1,
                         action='store', dest='subnet', type='string', default=None,
