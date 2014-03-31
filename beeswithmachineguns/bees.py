@@ -220,10 +220,11 @@ def _attack(params):
                 if h != '':
                     options += ' -H "%s"' % h.strip()
 
-        stdin, stdout, stderr = client.exec_command('tempfile -s .csv')
+        stdin, stdout, stderr = client.exec_command('tempfile -d $HOME -s .csv')
         params['csv_filename'] = stdout.read().strip()
         if params['csv_filename']:
-            options += ' -e %(csv_filename)s' % params
+            #options += ' -e %(csv_filename)s' % params
+            options += ' --log=%(csv_filename)s' % params
         else:
             print 'Bee %i lost sight of the target (connection timed out creating csv_filename).' % params['i']
             return None
@@ -236,35 +237,55 @@ def _attack(params):
 
         if params['cookies'] is not '':
             options += ' -H \"Cookie: %ssessionid=NotARealSessionID;\"' % params['cookies']
-        else:
-            options += ' -C \"sessionid=NotARealSessionID\"'
+        #else:
+        #    options += ' -H \"Cookiesessionid=NotARealSessionID\"'
+
+
+        # ugly patch force install siege - dont work well, install it in your AMI instead
+        stdin, stdout, stderr = client.exec_command("dpkg -l siege || sudo apt-get update &&  sudo apt-get install -q -y siege")
 
         params['options'] = options
-        benchmark_command = 'ab -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        #benchmark_command = 'ab -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        benchmark_command = 'siege -r %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        print "Bee %i is running this: " % params['i']
+        print "\t"  + benchmark_command
         stdin, stdout, stderr = client.exec_command(benchmark_command)
 
         response = {}
+        #print "erreur: %s" % stdout.read()
+        #print "siege result for this bee: %s" % stderr.read()
+        # siege output in stderr :/
+        ab_results = stderr.read()
 
-        ab_results = stdout.read()
-        ms_per_request_search = re.search('Time\ per\ request:\s+([0-9.]+)\ \[ms\]\ \(mean\)', ab_results)
+        print "Bee %i : Siege returned:\n%s" % (params['i'], ab_results)
+
+        ms_per_request_search = re.search('Response time:\s+([0-9.]+)\s+secs', ab_results)
 
         if not ms_per_request_search:
             print 'Bee %i lost sight of the target (connection timed out running ab).' % params['i']
             return None
 
-        requests_per_second_search = re.search('Requests\ per\ second:\s+([0-9.]+)\ \[#\/sec\]\ \(mean\)', ab_results)
-        failed_requests = re.search('Failed\ requests:\s+([0-9.]+)', ab_results)
-        complete_requests_search = re.search('Complete\ requests:\s+([0-9]+)', ab_results)
+        requests_per_second_search = re.search('Throughput:\s+([0-9.]+)\s+MB/sec', ab_results)
+        failed_requests = re.search('Failed transactions:\s+([0-9.]+)', ab_results)
+        complete_requests_search = re.search('Successful transactions:\s+([0-9]+)', ab_results)
 
         response['ms_per_request'] = float(ms_per_request_search.group(1))
         response['requests_per_second'] = float(requests_per_second_search.group(1))
         response['failed_requests'] = float(failed_requests.group(1))
         response['complete_requests'] = float(complete_requests_search.group(1))
 
-        stdin, stdout, stderr = client.exec_command('cat %(csv_filename)s' % params)
+        stdin, stdout, stderr = client.exec_command("cat %(csv_filename)s | sed 's/\s//g'" % params)
+
         response['request_time_cdf'] = []
-        for row in csv.DictReader(stdout):
-            row["Time in ms"] = float(row["Time in ms"])
+        #for row in csv.DictReader(stdout): 
+        for row in csv.DictReader(stdout, fieldnames=( "date","total requests","elapsed time (sec)","bytes (MB)",
+                                          "avg response time (sec)","req/sec","bytes/sec (MB/s)","total time/elapsed time",
+                                          "successes","failures" )):
+            for k in row.keys():
+              if k == 'date':
+                continue
+              row[k] = float(row[k])
+            row["Time in ms"] = row["avg response time (sec)"] * 1000
             response['request_time_cdf'].append(row)
         if not response['request_time_cdf']:
             print 'Bee %i lost sight of the target (connection timed out reading csv).' % params['i']
@@ -291,6 +312,7 @@ def _summarize_results(results, params, csv_filename):
     summarized_results['num_exception_bees'] = len(summarized_results['exception_bees'])
     summarized_results['num_complete_bees'] = len(summarized_results['complete_bees'])
 
+    #print "summarized_results = %s" % summarized_results
     complete_results = [r['complete_requests'] for r in summarized_results['complete_bees']]
     summarized_results['total_complete_requests'] = sum(complete_results)
 
